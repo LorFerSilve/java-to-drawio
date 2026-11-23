@@ -58,7 +58,7 @@ final class JavaSkeletons {
         hierarchy = new SkeletonHierarchy(diagram, types, parser);
     }
 
-    Result generate() {
+    Result generate(String author) {
         Map<Path, CompilationUnit> units = new LinkedHashMap<>();
         for (UmlType type : types.values()) {
             if (nested(type)) {
@@ -81,7 +81,10 @@ final class JavaSkeletons {
         new SkeletonImports(diagram).resolve(units);
         new SkeletonOverrides(parser, diagram, SkeletonImports.sourceTypes(units)).addMissingMethods(warnings);
         Map<Path, String> sources = new LinkedHashMap<>();
-        units.forEach((file, unit) -> sources.put(file, unit.toString()));
+        units.forEach((file, unit) -> {
+            SkeletonJavadoc.addTo(unit, author);
+            sources.put(file, unit.toString());
+        });
         return new Result(sources, List.copyOf(warnings));
     }
 

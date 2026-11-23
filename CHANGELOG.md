@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0]
+
+- Add Javadoc templates to generated Java types, constructors, methods, fields and enum constants.
+- Populate Javadoc tags for type parameters, arguments, return values, record components and declared exceptions.
+- Add an optional `--author <name>` to label each generated type.
+
 ## [0.3.0]
 
 - Add `drawio-to-java --input <diagram.drawio> --output <src-directory>` to generate Java 17 skeletons from editable UML class diagrams.

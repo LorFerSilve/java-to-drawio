@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.lorfersilve</groupId>
     <artifactId>java-to-drawio</artifactId>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
     <name>Java to Draw.io</name>
     <description>Convert Java source to editable Draw.io UML class diagrams and generate Java skeletons from UML.</description>
     <url>https://github.com/LorFerSilve/java-to-drawio</url>

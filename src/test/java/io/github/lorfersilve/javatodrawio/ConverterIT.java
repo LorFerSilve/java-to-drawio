@@ -1,5 +1,9 @@
 package io.github.lorfersilve.javatodrawio;
 
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.nodeTypes.NodeWithJavadoc;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -77,6 +81,57 @@ class ConverterIT {
     }
 
     @Test
+    void generatesJavadocFromDeclarationsWithAnOptionalAuthor() throws Exception {
+        Path diagram = temp.resolve("catalog.drawio");
+        convert(fixture(), diagram).assertExit(0);
+        Path source = temp.resolve("documented sources");
+        String author = "Élodie & team <Java> */ \\u002a\\u002f";
+        run("drawio-to-java", "--input", diagram.toString(), "--output", source.toString(), "--author", author)
+                .assertExit(0);
+
+        JavaParser parser = new JavaParser(new ParserConfiguration()
+                .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_17));
+        var files = SourceDiscovery.findJavaFiles(source);
+        assertEquals(9, files.size());
+        for (Path file : files) {
+            var unit = parser.parse(file).getResult().orElseThrow();
+            for (TypeDeclaration<?> type : unit.findAll(TypeDeclaration.class)) {
+                assertJavadoc(type, "@author Élodie &amp; team &lt;Java&gt; *&#47; &#92;u002a&#92;u002f");
+                for (var member : type.getMembers()) {
+                    assertTrue(member instanceof NodeWithJavadoc<?> node && node.getJavadocComment().isPresent(),
+                            () -> "Missing Javadoc for " + member);
+                }
+                if (type.isEnumDeclaration()) {
+                    for (var constant : type.asEnumDeclaration().getEntries()) {
+                        assertJavadoc(constant, "TODO");
+                    }
+                }
+            }
+        }
+        var catalog = parser.parse(source.resolve("sample/service/CatalogService.java")).getResult().orElseThrow()
+                .getType(0);
+        assertJavadoc(catalog, "@param <I> ");
+        assertJavadoc(catalog.getMethodsByName("find").get(0), "@param <T> ", "@param candidates ", "@return ",
+                "@throws IOException ");
+        String constructorDoc = assertJavadoc(catalog.getConstructors().get(0), "@param repository ");
+        assertFalse(constructorDoc.contains("@return"), constructorDoc);
+
+        var bundle = parser.parse(source.resolve("sample/catalog/Bundle.java")).getResult().orElseThrow()
+                .getType(0).asRecordDeclaration();
+        assertJavadoc(bundle, "@param products ");
+        assertJavadoc(bundle.getCompactConstructors().get(0), "@param products ");
+
+        Path docs = temp.resolve("javadoc");
+        List<String> arguments = new ArrayList<>(List.of("--release", "17", "-encoding", "UTF-8", "-private",
+                "-author", "-quiet", "-Werror", "-d", docs.toString()));
+        files.stream().map(Path::toString).forEach(arguments::add);
+        var report = new ByteArrayOutputStream();
+        assertEquals(0, ToolProvider.getSystemDocumentationTool().run(null, report, report,
+                arguments.toArray(String[]::new)), report::toString);
+        assertTrue(Files.isRegularFile(docs.resolve("sample/service/CatalogService.html")));
+    }
+
+    @Test
     void compilesCompressedHandDrawnUmlWithNativeRowsAndGenericInheritance() throws Exception {
         String graph = graph("""
                 <mxCell id="pkg" style="swimlane;" value="package shop" parent="1" vertex="1"/>
@@ -121,6 +176,11 @@ class ConverterIT {
         String contract = Files.readString(sources.resolve("stock/Readable.java"));
         assertTrue(contract.contains("List<T> read(T key) throws java.io.IOException;"), contract);
         assertTrue(order.contains("read(java.lang.String key) throws java.io.IOException {"), order);
+        var orderType = new JavaParser().parse(order).getResult().orElseThrow().getType(0);
+        assertFalse(assertJavadoc(orderType, "TODO").contains("@author"));
+        assertJavadoc(orderType.getMethodsByName("read").get(0), "@param key ", "@return ",
+                "@throws java.io.IOException ");
+        assertFalse(assertJavadoc(orderType.getMethodsByName("clear").get(0), "TODO").contains("@return"));
         compileSkeletons(sources);
     }
 
@@ -207,8 +267,11 @@ class ConverterIT {
         assertTrue(xml.output().contains("DOCTYPE"), xml.output());
         assertFalse(Files.exists(sources));
 
-        run("drawio-to-java", "--help").assertExit(0);
+        Invocation help = run("drawio-to-java", "--help");
+        help.assertExit(0);
+        assertTrue(help.output().contains("--author"), help.output());
         run("drawio-to-java", "--input", diagram.toString()).assertExit(2);
+        run("drawio-to-java", "--input", diagram.toString(), "--output", sources.toString(), "--author").assertExit(2);
     }
 
     @Test
@@ -554,6 +617,14 @@ class ConverterIT {
 
     private Invocation reverse(Path diagram, Path output) throws Exception {
         return run("drawio-to-java", "--input", diagram.toString(), "--output", output.toString());
+    }
+
+    private static String assertJavadoc(NodeWithJavadoc<?> declaration, String... expected) {
+        String text = declaration.getJavadocComment().orElseThrow().getContent();
+        for (String fragment : expected) {
+            assertTrue(text.contains(fragment), text);
+        }
+        return text;
     }
 
     private static String graph(String cells) {

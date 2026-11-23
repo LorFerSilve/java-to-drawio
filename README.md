@@ -63,6 +63,8 @@ java -jar java-to-drawio.jar drawio-to-java --help
 
 The command reads editable UML shapes from Draw.io, including older Java to Draw.io exports and exports with package overview pages. It creates the output directory and Java package folders as needed. An existing Java file at any destination stops the conversion before new files are written.
 
+Generated declarations include Javadoc with tags derived from their signatures. Pass `--author "First Last"` to add an author tag to each type.
+
 Use a UML class shape or put the title and each declaration on their own line in a box. A qualified title sets the Java package. Fields, operations and constructors use standard UML type notation.
 
 ```text

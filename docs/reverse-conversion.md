@@ -36,6 +36,8 @@ New Java to Draw.io exports store imports and Java inheritance clauses as shape 
 
 The output has one file per top-level type. Nested types go in their enclosing file. Abstract methods and annotation elements use declaration syntax. Concrete methods and constructors use TODO placeholders. The converter can also add a TODO method for an abstract operation inherited from a type present in the diagram. Its diagnostic names the affected shape and signature.
 
+Every generated type, constructor, method, field and enum constant includes a Javadoc template. The generator adds `@param` for type parameters, arguments and record components, `@return` for return values, and `@throws` for declared exceptions. The TODO text marks the descriptions and behavioral contracts to fill in as you implement the code. Pass `--author "First Last"` to set `@author` on generated types.
+
 The diagram defines what can be recovered. Older exports may omit imports, external inheritance, or generic arguments on an inheritance arrow. Original method bodies, field initializers, annotations on members and build files require source or build information beyond the UML model. Some designs need additional constructor arguments, method overrides, or library dependencies before compilation. Java 17 is the source language level.
 
 Invalid declarations report the input file and, when available, the page and shape ID. The CLI exits with code `2` for invalid arguments or an invalid input path, `3` for invalid XML or UML, and `4` when it cannot safely write the output.
