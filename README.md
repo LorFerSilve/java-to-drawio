@@ -1,6 +1,6 @@
 # Java to Draw.io
 
-Generate an editable UML class diagram from a Java project or source directory. The CLI reads source files locally and writes a `.drawio` file with class shapes, editable member labels, and connectors.
+Generate editable UML class diagrams from Java source, or create Java skeletons from Draw.io class diagrams. Both directions run locally in the same standalone CLI.
 
 ## Run the converter
 
@@ -53,6 +53,26 @@ The converter accepts UTF-8 Java source using the Java 17 language level, includ
 It supports Maven, Gradle, and ordinary folder layouts, including multiple source roots and files in the unnamed package. It scans `.java` files throughout the supplied directory, including test sources in that tree. Directories named `.git`, `.gradle`, `target`, `build`, `out`, and `node_modules` are skipped, as are symbolic links and directory junctions within the tree. To diagram production sources only, pass the appropriate source directory.
 
 Analysis uses the declarations in the selected source tree, JDK types from the running Java installation, and any JARs passed with `--classpath`. Unavailable external types and ambiguous references are reported with source locations. Read the [analysis rules and limitations](docs/analysis.md) for details.
+
+## Generate Java from a Draw.io diagram
+
+```powershell
+java -jar java-to-drawio.jar drawio-to-java --input ".\drawio\architecture.drawio" --output ".\src-generated"
+java -jar java-to-drawio.jar drawio-to-java --help
+```
+
+The command reads editable UML shapes from Draw.io, including older Java to Draw.io exports and exports with package overview pages. It creates the output directory and Java package folders as needed. An existing Java file at any destination stops the conversion before new files are written.
+
+Use a UML class shape or put the title and each declaration on their own line in a box. A qualified title sets the Java package. Fields, operations and constructors use standard UML type notation.
+
+```text
++ shop.Order
+- quantity: int
++ Order(quantity: int)
++ total(unitPrice: int): int
+```
+
+This generates `shop/Order.java` under the output directory. Concrete methods and constructors contain TODO placeholders. For inheritance, point a solid hollow triangle to the superclass or superinterface. For interface implementation, use a dashed hollow triangle. The [reverse conversion guide](docs/reverse-conversion.md) covers generics, imports, supported shapes and diagnostics.
 
 ## Build from source
 

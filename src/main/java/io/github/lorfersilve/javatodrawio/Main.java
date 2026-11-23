@@ -6,6 +6,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -13,6 +14,7 @@ public final class Main {
     private static final String HELP = """
             Java to Draw.io
             Usage: java -jar java-to-drawio.jar --source <directory> --output <file.drawio> [options]
+                   java -jar java-to-drawio.jar drawio-to-java --input <diagram.drawio> --output <src-directory>
                    java -jar java-to-drawio.jar --help
 
               --source <directory>  Java project or source directory to scan recursively
@@ -23,7 +25,8 @@ public final class Main {
               --force               Allow replacing an existing output file
               --help                Show this help
 
-            Quote paths containing spaces. Input is UTF-8 Java 17 source.
+            Quote paths containing spaces. Java source is UTF-8 Java 17.
+            Use drawio-to-java --help for the reverse command.
             Exit codes: 0 success, 2 invalid arguments, source or classpath, 3 analysis failure, 4 output failure.
             """;
 
@@ -35,6 +38,9 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream err) {
+        if (args.length > 0 && args[0].equals("drawio-to-java")) {
+            return ReverseCommand.run(Arrays.copyOfRange(args, 1, args.length), out, err);
+        }
         if (args.length == 1 && args[0].equals("--help")) {
             out.print(HELP);
             return 0;
@@ -95,7 +101,7 @@ public final class Main {
         return 0;
     }
 
-    private static String describe(Exception error) {
+    static String describe(Exception error) {
         if (error instanceof AccessDeniedException) {
             return "Access denied (" + error.getMessage() + ")";
         }

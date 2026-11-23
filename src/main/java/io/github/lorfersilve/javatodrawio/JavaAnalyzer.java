@@ -23,6 +23,7 @@ import com.github.javaparser.ast.nodeTypes.NodeWithModifiers;
 import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.type.Type;
 import io.github.lorfersilve.javatodrawio.UmlModel.Field;
+import io.github.lorfersilve.javatodrawio.UmlModel.Declarations;
 import io.github.lorfersilve.javatodrawio.UmlModel.Kind;
 import io.github.lorfersilve.javatodrawio.UmlModel.Modifier;
 import io.github.lorfersilve.javatodrawio.UmlModel.Operation;
@@ -205,9 +206,19 @@ final class JavaAnalyzer {
                 ? parent : null;
         boolean implicitlyPublic = enclosing != null && isInterfaceLike(enclosing);
         boolean implicitlyStatic = enclosing != null && (implicitlyPublic || kind != Kind.CLASS);
+        Declarations declarations = new Declarations(
+                source.unit().getImports().stream()
+                        .map(item -> "import " + (item.isStatic() ? "static " : "") + item.getNameAsString()
+                                + (item.isAsterisk() ? ".*" : "") + ";")
+                        .toList(),
+                typeNames(JavaTypeResolver.extendedTypes(type)), typeNames(JavaTypeResolver.implementedTypes(type)),
+                type instanceof ClassOrInterfaceDeclaration declaration ? typeNames(declaration.getPermittedTypes())
+                        : List.of(),
+                type instanceof EnumDeclaration enumeration
+                        ? enumeration.getEntries().stream().map(entry -> entry.getNameAsString()).toList() : List.of());
         return new UmlType(id, source.packageName(), kind, visibility(type, implicitlyPublic),
                 modifiers(type, implicitlyStatic, interfaceMembers), typeParameters(type),
-                List.copyOf(fields), List.copyOf(operations));
+                List.copyOf(fields), List.copyOf(operations), declarations);
     }
 
     private static Operation operation(CallableDeclaration<?> callable, Kind ownerKind) {
@@ -260,6 +271,9 @@ final class JavaAnalyzer {
         }
         if (declaration.hasModifier(Keyword.NON_SEALED)) {
             modifiers.add(Modifier.NON_SEALED);
+        }
+        if (declaration instanceof ClassOrInterfaceDeclaration && declaration.hasModifier(Keyword.FINAL)) {
+            modifiers.add(Modifier.FINAL);
         }
         return Set.copyOf(modifiers);
     }

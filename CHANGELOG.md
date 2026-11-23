@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0]
+
+- Add `drawio-to-java --input <diagram.drawio> --output <src-directory>` to generate Java 17 skeletons from editable UML class diagrams.
+- Read native Draw.io class shapes, typed UML labels, and older exports, including compressed and multipage diagrams.
+- Preserve imports and Java inheritance declarations in new exports to improve round-trip conversion.
+- Generate placeholders for concrete operations and missing inherited methods from modeled types. Report malformed declarations and protect existing source files.
+- Compile generated skeletons in the end-to-end tests.
+
 ## [0.2.0]
 
 - Show more actionable parse errors with source lines, carets, and a specific hint for missing package semicolons.

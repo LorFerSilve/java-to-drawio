@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 final class DrawioWriter {
-    private static final int MAX_COLUMNS = 90;
+    static final int MAX_COLUMNS = 90;
     private static final int LINE_HEIGHT = 18;
     private static final int PACKAGE_PADDING = 44;
     private static final String FONT = "fontSize=12;fontFamily=monospace;";
@@ -241,7 +241,14 @@ final class DrawioWriter {
                 + "childLayout=stackLayout;horizontalStack=0;resizeParent=0;resizeLast=1;container=1;dropTarget=0;"
                 + "align=center;verticalAlign=middle;swimlaneFillColor=#ffffff;spacing=0;"
                 + "startSize=" + labels.header().height() + ";" + FONT + colors;
-        Element vertex = vertex(root, id, "1", labels.header().html(), style);
+        var declarations = type.declarations();
+        Element object = element(root, "UserObject", "id", id, "label", labels.header().html(),
+                "javaImports", String.join("\n", declarations.imports()),
+                "javaExtends", String.join("\n", declarations.superclasses()),
+                "javaImplements", String.join("\n", declarations.interfaces()),
+                "javaPermits", String.join("\n", declarations.permits()),
+                "javaEnumConstants", String.join("\n", declarations.enumConstants()));
+        Element vertex = element(object, "mxCell", "style", style, "vertex", "1", "parent", "1");
         geometry(vertex, box.x(), box.y(), box.size().width(), box.size().height());
 
         int width = box.size().width();
@@ -327,6 +334,8 @@ final class DrawioWriter {
             name += " {sealed}";
         } else if (type.modifiers().contains(Modifier.NON_SEALED)) {
             name += " {non-sealed}";
+        } else if (type.modifiers().contains(Modifier.FINAL)) {
+            name += " {final}";
         }
         header.add(name, true, type.modifiers().contains(Modifier.ABSTRACT),
                 type.modifiers().contains(Modifier.STATIC));

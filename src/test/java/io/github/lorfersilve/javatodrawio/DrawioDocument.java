@@ -59,6 +59,11 @@ record DrawioDocument(String name, Map<String, Element> cells) {
         Element root = onlyChild(graph, "root");
         Map<String, Element> cells = new LinkedHashMap<>();
         for (Element cell : elements(root.getElementsByTagName("mxCell"))) {
+            Element parent = (Element) cell.getParentNode();
+            if ("UserObject".equals(parent.getTagName())) {
+                cell.setAttribute("id", parent.getAttribute("id"));
+                cell.setAttribute("value", parent.getAttribute("label"));
+            }
             String id = cell.getAttribute("id");
             assertTrue(!id.isBlank(), "Missing cell ID");
             assertNull(cells.put(id, cell), "Duplicate cell ID " + id);

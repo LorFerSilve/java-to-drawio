@@ -42,7 +42,7 @@ record CliOptions(Path source, Path output, boolean force, boolean createOutputD
         return new CliOptions(source, output, force, createOutputDir, overview, List.copyOf(classpath));
     }
 
-    private static Path pathArgument(String[] args, int index, String option) {
+    static Path pathArgument(String[] args, int index, String option) {
         if (index >= args.length || args[index].isBlank() || args[index].startsWith("--")) {
             throw new IllegalArgumentException("Missing path after " + option + ".");
         }

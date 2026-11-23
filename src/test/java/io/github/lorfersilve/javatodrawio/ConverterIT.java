@@ -5,14 +5,19 @@ import org.junit.jupiter.api.io.TempDir;
 
 import javax.tools.ToolProvider;
 import java.io.ByteArrayOutputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -41,6 +46,169 @@ class ConverterIT {
         Invocation unknown = run("--unknown");
         unknown.assertExit(2);
         assertTrue(unknown.output().contains("Unexpected argument --unknown"));
+    }
+
+    @Test
+    void regeneratesCompilableSkeletonsFromAJava17ProjectAndItsOverview() throws Exception {
+        for (boolean overview : List.of(false, true)) {
+            Path diagram = temp.resolve("catalog " + overview + ".drawio");
+            List<String> arguments = new ArrayList<>(List.of("--source", fixture().toString(), "--output",
+                    diagram.toString()));
+            if (overview) {
+                arguments.add("--overview");
+            }
+            run(arguments.toArray(String[]::new)).assertExit(0);
+
+            Path sources = temp.resolve("generated source " + overview);
+            Invocation reverse = reverse(diagram, sources);
+            reverse.assertExit(0);
+            assertTrue(reverse.output().contains("Generated 9 Java files from 11 UML types"), reverse.output());
+            String product = Files.readString(sources.resolve("sample/catalog/Product.java"));
+            assertTrue(product.contains("extends StockItem implements Item, Serializable"), product);
+            assertTrue(product.contains("super(id);"), product);
+            assertTrue(product.contains("UnsupportedOperationException"), product);
+            assertTrue(Files.readString(sources.resolve("sample/catalog/Item.java")).contains("enum Availability"));
+            assertTrue(Files.readString(sources.resolve("sample/catalog/Bundle.java"))
+                    .contains("record Bundle(List<Product> products) implements Item"));
+            assertFalse(Files.exists(sources.resolve("sample/catalog/Item.Availability.java")));
+            assertFalse(Files.exists(sources.resolve("module-info.java")));
+            compileSkeletons(sources);
+        }
+    }
+
+    @Test
+    void compilesCompressedHandDrawnUmlWithNativeRowsAndGenericInheritance() throws Exception {
+        String graph = graph("""
+                <mxCell id="pkg" style="swimlane;" value="package shop" parent="1" vertex="1"/>
+                <mxCell id="read" style="html=1;" value="«interface»&lt;br&gt;+ stock.Readable&amp;lt;T&amp;gt;&lt;br&gt;
+                    + read(key: T): List&amp;lt;T&amp;gt; {throws java.io.IOException}" parent="1" vertex="1"/>
+                <mxCell id="base" style="html=1;" value="«abstract»&lt;br&gt;+ stock.Base&amp;lt;T&amp;gt;&lt;br&gt;
+                    implements Readable&amp;lt;T&amp;gt;&lt;br&gt;# Base(id: int)" parent="1" vertex="1"/>
+                <object label="+ Order&lt;div&gt;extends stock.Base&amp;lt;String&amp;gt;&lt;/div&gt;" id="order">
+                  <mxCell style="swimlane;childLayout=stackLayout;html=1;" parent="pkg" vertex="1"/>
+                </object>
+                <mxCell id="fields" style="text;html=1;" value="- labels: List&amp;lt;String&amp;gt;&lt;br&gt;
+                  &lt;u&gt;+ count: int&lt;/u&gt;" parent="order" vertex="1"/>
+                <mxCell id="ctor" style="text;html=1;" value="+ Order(id: int)" parent="order" vertex="1"/>
+                <mxCell id="op" style="text;html=1;" value="+ clear(): void" parent="order" vertex="1"/>
+                <mxCell id="extends" style="startArrow=blockThin;startFill=0;endArrow=none;"
+                  source="base" target="ctor" parent="1" edge="1"/>
+                <mxCell id="implements" style="endArrow=block;endFill=0;dashed=1;"
+                  source="base" target="read" parent="1" edge="1"/>
+                <mxCell id="note" style="shape=note;html=1;" value="Note: discuss later" parent="1" vertex="1"/>
+                """);
+        String encoded = URLEncoder.encode(graph, StandardCharsets.UTF_8).replace("+", "%20");
+        var bytes = new ByteArrayOutputStream();
+        Deflater deflate = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+        try (var compressed = new DeflaterOutputStream(bytes, deflate)) {
+            compressed.write(encoded.getBytes(StandardCharsets.UTF_8));
+        } finally {
+            deflate.end();
+        }
+        Path input = temp.resolve("Hand drawn model.drawio");
+        Files.writeString(input, "<mxfile><diagram name=\"Orders\">" + Base64.getEncoder().encodeToString(bytes.toByteArray())
+                + "</diagram></mxfile>");
+
+        Path sources = temp.resolve("src");
+        Invocation result = reverse(input, sources);
+        result.assertExit(0);
+        assertTrue(result.output().contains("Added inherited operation stub read(java.lang.String)"), result.output());
+        String order = Files.readString(sources.resolve("shop/Order.java"));
+        assertTrue(order.contains("extends stock.Base<String>"), order);
+        assertTrue(order.contains("private List<String> labels;"), order);
+        assertTrue(order.contains("public static int count;"), order);
+        assertTrue(order.contains("super(id);"), order);
+        String contract = Files.readString(sources.resolve("stock/Readable.java"));
+        assertTrue(contract.contains("List<T> read(T key) throws java.io.IOException;"), contract);
+        assertTrue(order.contains("read(java.lang.String key) throws java.io.IOException {"), order);
+        compileSkeletons(sources);
+    }
+
+    @Test
+    void readsLegacyNestedTypesAndCoalescesIdenticalOperationsWithADiagnostic() throws Exception {
+        Path diagram = temp.resolve("legacy.drawio");
+        Files.writeString(diagram, graph("""
+                <mxCell id="type:Example" style="html=1;" value="&lt;b&gt;+ Example&lt;/b&gt;" parent="1" vertex="1"/>
+                <mxCell id="type:Example.Result" style="html=1;" value="&lt;u&gt;+ Example.Result&lt;/u&gt;"
+                  parent="1" vertex="1"/>
+                <mxCell id="methods:Example" style="html=1;" value="+ get(): Result&lt;br&gt;+ get(): Result"
+                  parent="type:Example" vertex="1"/>
+                """));
+        Path sources = temp.resolve("src");
+        Invocation reverse = reverse(diagram, sources);
+        reverse.assertExit(0);
+        assertTrue(reverse.output().contains("Repeated identical operation get()"), reverse.output());
+        assertTrue(Files.readString(sources.resolve("Example.java")).contains("public static class Result"));
+        compileSkeletons(sources);
+    }
+
+    @Test
+    void protectsExistingJavaFilesBeforePublishingAnySkeleton() throws Exception {
+        Path diagram = temp.resolve("conflict.drawio");
+        Files.writeString(diagram, graph("""
+                <mxCell id="new" value="+ shop.Fresh" parent="1" vertex="1"/>
+                <mxCell id="old" value="+ shop.Existing" parent="1" vertex="1"/>
+                """));
+        Path sources = temp.resolve("src");
+        Path existing = sources.resolve("shop/Existing.java");
+        Files.createDirectories(existing.getParent());
+        Files.writeString(existing, "package shop; class Existing { int keep; }");
+        Invocation reverse = reverse(diagram, sources);
+        reverse.assertExit(4);
+        assertTrue(reverse.output().contains("Existing.java"), reverse.output());
+        assertEquals("package shop; class Existing { int keep; }", Files.readString(existing));
+        assertFalse(Files.exists(sources.resolve("shop/Fresh.java")));
+
+        Path fresh = Files.createDirectory(temp.resolve("existing source directory"));
+        reverse(diagram, fresh).assertExit(0);
+        compileSkeletons(fresh);
+    }
+
+    @Test
+    void rejectsIncompleteOperationsAndAmbiguousNamesWithShapeLocations() throws Exception {
+        Path sources = temp.resolve("src");
+        Path diagram = temp.resolve("invalid.drawio");
+        Files.writeString(diagram, "<mxfile><diagram name=\"Draft\">" + graph("""
+                <mxCell id="manual-type" style="html=1;" value="+ shop.Order&lt;br&gt;+ total()"
+                  parent="1" vertex="1"/>
+                """) + "</diagram></mxfile>");
+        Invocation incomplete = reverse(diagram, sources);
+        incomplete.assertExit(3);
+        assertTrue(incomplete.output().contains("Page 'Draft', cell 'manual-type'"), incomplete.output());
+        assertTrue(incomplete.output().contains("Specify the return type of 'total'"), incomplete.output());
+        assertFalse(Files.exists(sources));
+
+        Files.writeString(diagram, graph("""
+                <mxCell id="widget1" value="+ a.Widget" parent="1" vertex="1"/>
+                <mxCell id="widget2" value="+ b.Widget" parent="1" vertex="1"/>
+                <mxCell id="user" value="+ shop.User&#10;- widget: Widget" parent="1" vertex="1"/>
+                """));
+        Invocation ambiguous = reverse(diagram, sources);
+        ambiguous.assertExit(3);
+        assertTrue(ambiguous.output().contains("Ambiguous type 'Widget' (a.Widget, b.Widget)"), ambiguous.output());
+        assertFalse(Files.exists(sources));
+    }
+
+    @Test
+    void rejectsNonUmlAndUnsafeXmlWithoutCreatingAnOutputDirectory() throws Exception {
+        Path diagram = temp.resolve("other.drawio");
+        Path sources = temp.resolve("src");
+        Files.writeString(diagram, graph("""
+                <mxCell id="process" value="Start" parent="1" vertex="1"/>
+                """));
+        Invocation other = reverse(diagram, sources);
+        other.assertExit(3);
+        assertTrue(other.output().contains("No UML class boxes found"), other.output());
+        assertFalse(Files.exists(sources));
+
+        Files.writeString(diagram, "<!DOCTYPE mxGraphModel>" + graph(""));
+        Invocation xml = reverse(diagram, sources);
+        xml.assertExit(3);
+        assertTrue(xml.output().contains("DOCTYPE"), xml.output());
+        assertFalse(Files.exists(sources));
+
+        run("drawio-to-java", "--help").assertExit(0);
+        run("drawio-to-java", "--input", diagram.toString()).assertExit(2);
     }
 
     @Test
@@ -382,6 +550,28 @@ class ConverterIT {
 
     private Path fixture() throws Exception {
         return Path.of(getClass().getResource("/fixtures/Catalog project").toURI());
+    }
+
+    private Invocation reverse(Path diagram, Path output) throws Exception {
+        return run("drawio-to-java", "--input", diagram.toString(), "--output", output.toString());
+    }
+
+    private static String graph(String cells) {
+        return "<mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/>"
+                + cells + "</root></mxGraphModel>";
+    }
+
+    private void compileSkeletons(Path source) throws Exception {
+        Path compiled = Files.createTempDirectory(temp, "compiled skeletons ");
+        List<String> arguments = new ArrayList<>(List.of("--release", "17", "-encoding", "UTF-8", "-d",
+                compiled.toString()));
+        try (var files = Files.walk(source)) {
+            files.filter(path -> path.toString().endsWith(".java")).map(Path::toString).forEach(arguments::add);
+        }
+        assertTrue(arguments.size() > 6, "No skeleton files found");
+        var report = new ByteArrayOutputStream();
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, report, report, arguments.toArray(String[]::new)),
+                report::toString);
     }
 
     private Path compileLibrary(String name, Path dependency, Map<String, String> sources) throws Exception {

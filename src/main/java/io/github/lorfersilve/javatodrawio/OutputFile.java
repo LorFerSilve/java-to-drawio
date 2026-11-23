@@ -65,7 +65,7 @@ final class OutputFile {
         }
     }
 
-    private static void publishNew(Path temporary, Path target) throws IOException {
+    static void publishNew(Path temporary, Path target) throws IOException {
         try {
             // Linking publishes a complete file and fails atomically if a competing writer wins.
             Files.createLink(target, temporary);

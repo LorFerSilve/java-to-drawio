@@ -24,12 +24,16 @@ record UmlModel(List<UmlType> types, List<Relationship> relationships) {
     }
 
     enum Modifier {
-        STATIC, ABSTRACT, SEALED, NON_SEALED
+        STATIC, ABSTRACT, SEALED, NON_SEALED, DEFAULT, FINAL
+    }
+
+    record Declarations(List<String> imports, List<String> superclasses, List<String> interfaces,
+                        List<String> permits, List<String> enumConstants) {
     }
 
     record UmlType(String qualifiedName, String packageName, Kind kind, Visibility visibility,
                    Set<Modifier> modifiers, List<String> typeParameters, List<Field> fields,
-                   List<Operation> operations) {
+                   List<Operation> operations, Declarations declarations) {
         String displayName() {
             return packageName.isEmpty() ? qualifiedName : qualifiedName.substring(packageName.length() + 1);
         }
