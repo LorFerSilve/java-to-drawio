@@ -15,12 +15,14 @@ class CliOptionsTest {
     @Test
     void acceptsPathsWithSpacesAndFlagsInAnyOrder() {
         CliOptions options = CliOptions.parse(new String[] {
-                "--force", "--output", "my diagrams/structure.DRAWIO", "--source", "Java Project"
+                "--force", "--output", "my diagrams/structure.DRAWIO", "--create-output-dir",
+                "--source", "Java Project"
         });
 
         assertEquals(Path.of("Java Project").toAbsolutePath(), options.source());
         assertEquals(Path.of("my diagrams/structure.DRAWIO").toAbsolutePath(), options.output());
         assertTrue(options.force());
+        assertTrue(options.createOutputDir());
     }
 
     @Test
@@ -33,7 +35,8 @@ class CliOptionsTest {
             "--wrong", "--help --force", "--output a.drawio", "--source .",
             "--source --output a.drawio", "--source . --output",
             "--source . --output a.java", "--source . --source src --output a.drawio",
-            "--source . --output a.drawio --force --force"
+            "--source . --output a.drawio --force --force",
+            "--source . --output a.drawio --create-output-dir --create-output-dir"
     })
     void rejectsInvalidArgumentCombinations(String arguments) {
         assertThrows(IllegalArgumentException.class, () -> CliOptions.parse(arguments.split(" ")));

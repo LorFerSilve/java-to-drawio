@@ -3,6 +3,7 @@ package io.github.lorfersilve.javatodrawio;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.AccessDeniedException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -10,11 +11,12 @@ import java.util.Locale;
 public final class Main {
     private static final String HELP = """
             Java to Draw.io
-            Usage: java -jar java-to-drawio.jar --source <directory> --output <file.drawio> [--force]
+            Usage: java -jar java-to-drawio.jar --source <directory> --output <file.drawio> [options]
                    java -jar java-to-drawio.jar --help
 
               --source <directory>  Java project or source directory to scan recursively
-              --output <file>       .drawio destination in an existing directory
+              --output <file>       .drawio destination
+              --create-output-dir   Create missing destination directories on successful analysis
               --force               Allow replacing an existing output file
               --help                Show this help
 
@@ -43,7 +45,7 @@ public final class Main {
             return 2;
         }
         try {
-            OutputFile.validate(options.output(), options.force());
+            OutputFile.validate(options.output(), options.force(), options.createOutputDir());
         } catch (IOException | SecurityException e) {
             err.println("Output error: " + describe(e));
             return 4;
@@ -66,6 +68,9 @@ public final class Main {
         }
         result.warnings().forEach(warning -> err.println("Warning: " + warning));
         try {
+            if (options.createOutputDir()) {
+                Files.createDirectories(options.output().getParent());
+            }
             OutputFile.write(options.output(), result.model(), options.force());
         } catch (IOException | SecurityException e) {
             err.println("Cannot write " + options.output() + ": " + describe(e));

@@ -5,11 +5,12 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 
-record CliOptions(Path source, Path output, boolean force) {
+record CliOptions(Path source, Path output, boolean force, boolean createOutputDir) {
     static CliOptions parse(String[] args) {
         Path source = null;
         Path output = null;
         boolean force = false;
+        boolean createOutputDir = false;
         Set<String> seen = new HashSet<>();
         for (int i = 0; i < args.length; i++) {
             String option = args[i];
@@ -20,6 +21,7 @@ record CliOptions(Path source, Path output, boolean force) {
                 case "--source" -> source = pathArgument(args, ++i, option);
                 case "--output" -> output = pathArgument(args, ++i, option);
                 case "--force" -> force = true;
+                case "--create-output-dir" -> createOutputDir = true;
                 default -> throw new IllegalArgumentException("Unexpected argument " + option + ".");
             }
         }
@@ -30,7 +32,7 @@ record CliOptions(Path source, Path output, boolean force) {
                 || !output.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".drawio")) {
             throw new IllegalArgumentException("--output must name a .drawio file.");
         }
-        return new CliOptions(source, output, force);
+        return new CliOptions(source, output, force, createOutputDir);
     }
 
     private static Path pathArgument(String[] args, int index, String option) {

@@ -29,7 +29,7 @@ class ConverterIT {
     void packagesAnExecutableJarWithHelpAndArgumentValidation() throws Exception {
         Invocation help = run("--help");
         help.assertExit(0);
-        for (String option : List.of("--source", "--output", "--force", "--help")) {
+        for (String option : List.of("--source", "--output", "--create-output-dir", "--force", "--help")) {
             assertTrue(help.output().contains(option), help.output());
         }
         Invocation unknown = run("--unknown");
@@ -129,14 +129,25 @@ class ConverterIT {
                 /** Shows the board. */
                 public class DominoBoardView {}
                 """);
-        Path output = temp.resolve("diagram.drawio");
-        Invocation error = convert(source, output);
+        Path output = temp.resolve("unused output/diagram.drawio");
+        Invocation error = run("--source", source.toString(), "--output", output.toString(), "--create-output-dir");
         error.assertExit(3);
         assertTrue(error.output().contains("DominoBoardView.java:2:20: Parse error: add ';' after the package name."),
                 error.output());
         assertTrue(error.output().contains("  package game.domino" + System.lineSeparator() + " ".repeat(21) + "^"),
                 error.output());
-        assertFalse(Files.exists(output));
+        assertFalse(Files.exists(output.getParent()));
+    }
+
+    @Test
+    void createsMissingOutputDirectoriesWhenRequestedAndStillProtectsFiles() throws Exception {
+        Path output = temp.resolve("my diagrams/architecture/overview.drawio");
+        String[] args = {"--source", fixture().toString(), "--output", output.toString(), "--create-output-dir"};
+        run(args).assertExit(0);
+        assertEquals(11, DrawioDocument.read(output).classes().size());
+        Files.writeString(output, "manual changes");
+        run(args).assertExit(4);
+        assertEquals("manual changes", Files.readString(output));
     }
 
     @Test

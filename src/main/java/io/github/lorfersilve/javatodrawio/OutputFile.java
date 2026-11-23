@@ -13,14 +13,18 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 
 final class OutputFile {
-    static void validate(Path target, boolean force) throws IOException {
+    static void validate(Path target, boolean force, boolean createOutputDir) throws IOException {
         Path directory = target.getParent();
         try {
             if (!Files.readAttributes(directory, BasicFileAttributes.class).isDirectory()) {
                 throw new IOException("Output parent is not a directory: " + directory);
             }
         } catch (NoSuchFileException e) {
-            throw new IOException("Output directory does not exist: " + directory, e);
+            if (createOutputDir) {
+                return;
+            }
+            throw new IOException("Output directory does not exist: " + directory
+                    + ". Use --create-output-dir to create it.", e);
         }
         try {
             var attributes = Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
