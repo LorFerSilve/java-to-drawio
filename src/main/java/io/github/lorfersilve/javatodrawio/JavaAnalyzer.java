@@ -78,10 +78,11 @@ final class JavaAnalyzer {
         List<UmlType> types = sourceTypes.entrySet().stream()
                 .map(entry -> describe(entry.getKey(), entry.getValue()))
                 .toList();
+        var relations = new RelationshipAnalyzer(sourceTypes).analyze();
         List<String> warnings = types.isEmpty()
                 ? List.of("No top-level or member types declared in the Java source files.")
-                : List.of();
-        return new Result(new UmlModel(types, List.of()), files.size(), warnings);
+                : relations.warnings();
+        return new Result(new UmlModel(types, relations.relationships()), files.size(), warnings);
     }
 
     private static Optional<CompilationUnit> parse(Path file, JavaParser parser, List<String> errors) {
