@@ -17,6 +17,8 @@ import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.RecordDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.expr.Name;
+import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.nodeTypes.NodeWithModifiers;
 import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.type.Type;
@@ -90,7 +92,7 @@ final class JavaAnalyzer {
             String source = Files.readString(file, StandardCharsets.UTF_8);
             var result = parser.parse(source.startsWith("\uFEFF") ? source.substring(1) : source);
             if (result.isSuccessful()) {
-                return result.getResult();
+                return result.getResult().map(JavaAnalyzer::normalizeIdentifiers);
             }
             for (Problem problem : result.getProblems()) {
                 errors.add(file + ": " + problem.getVerboseMessage());
@@ -100,10 +102,38 @@ final class JavaAnalyzer {
             }
         } catch (CharacterCodingException e) {
             errors.add(file + ": invalid UTF-8 source file (" + e.getMessage() + ")");
-        } catch (IOException e) {
+        } catch (IOException | SecurityException e) {
             errors.add(file + ": cannot read source file (" + e.getMessage() + ")");
         }
         return Optional.empty();
+    }
+
+    private static CompilationUnit normalizeIdentifiers(CompilationUnit unit) {
+        // Java identifier equality ignores these code points. Keep source offsets on the original nodes.
+        unit.walk(node -> {
+            if (node instanceof SimpleName name) {
+                String normalized = normalizedIdentifier(name.getIdentifier());
+                if (!normalized.equals(name.getIdentifier())) {
+                    name.setIdentifier(normalized);
+                }
+            } else if (node instanceof Name name) {
+                String normalized = normalizedIdentifier(name.getIdentifier());
+                if (!normalized.equals(name.getIdentifier())) {
+                    name.setIdentifier(normalized);
+                }
+            }
+        });
+        return unit;
+    }
+
+    private static String normalizedIdentifier(String identifier) {
+        if (identifier.codePoints().noneMatch(Character::isIdentifierIgnorable)) {
+            return identifier;
+        }
+        StringBuilder result = new StringBuilder();
+        identifier.codePoints().filter(codePoint -> !Character.isIdentifierIgnorable(codePoint))
+                .forEach(result::appendCodePoint);
+        return result.toString();
     }
 
     private static void index(TypeDeclaration<?> type, Path file, CompilationUnit unit,

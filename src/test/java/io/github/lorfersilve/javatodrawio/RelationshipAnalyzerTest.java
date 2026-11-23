@@ -201,6 +201,18 @@ class RelationshipAnalyzerTest {
     }
 
     @Test
+    void doesNotBindUnnamedPackageTypesFromNamedPackages() throws Exception {
+        write("Types.java", "class Types { public static class Member {} }");
+        write("DefaultUse.java", "class DefaultUse { Types.Member member; }");
+        write("named/UsesTypes.java", "package named; class UsesTypes { Types.Member member; }");
+        var result = analyze();
+        assertEquals(Set.of(new Relationship("DefaultUse", "Types.Member", ASSOCIATION)),
+                Set.copyOf(result.model().relationships()));
+        assertEquals(1, result.warnings().size(), result.warnings().toString());
+        assertTrue(result.warnings().get(0).contains("cannot resolve type 'Types.Member'"));
+    }
+
+    @Test
     void reportsInvalidHierarchyReferencesWithoutRecursingForever() throws Exception {
         write("Broken.java", """
                 class First extends Second { Unavailable value; }

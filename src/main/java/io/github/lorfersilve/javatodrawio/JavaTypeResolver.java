@@ -176,13 +176,18 @@ final class JavaTypeResolver {
     }
 
     private Resolution qualifiedName(String name) {
-        for (int dot = name.indexOf('.'); dot >= 0; dot = name.indexOf('.', dot + 1)) {
+        int firstDot = name.indexOf('.');
+        if (firstDot < 0) {
+            return Resolution.MISSING;
+        }
+        // An absolute name starts with a package. Unnamed-package types resolve through lexical lookup.
+        for (int dot = name.indexOf('.', firstDot + 1); dot >= 0; dot = name.indexOf('.', dot + 1)) {
             String prefix = name.substring(0, dot);
             if (declared(prefix)) {
                 return memberPath(prefix, name.substring(dot + 1));
             }
         }
-        return declared(name) ? Resolution.found(name) : Resolution.MISSING;
+        return declared(name) && !packageOf(name).isEmpty() ? Resolution.found(name) : Resolution.MISSING;
     }
 
     private Resolution memberPath(String owner, String path) {
@@ -249,10 +254,14 @@ final class JavaTypeResolver {
     }
 
     private boolean importAccessible(String name, String packageName) {
+        String declaredPackage = packageOf(name);
+        if (declaredPackage.isEmpty()) {
+            return false;
+        }
         return switch (access(name)) {
             case PUBLIC -> true;
             case PRIVATE -> false;
-            case NONE, PROTECTED -> packageName.equals(packageOf(name));
+            case NONE, PROTECTED -> packageName.equals(declaredPackage);
         };
     }
 
