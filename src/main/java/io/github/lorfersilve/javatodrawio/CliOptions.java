@@ -1,0 +1,42 @@
+package io.github.lorfersilve.javatodrawio;
+
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
+
+record CliOptions(Path source, Path output, boolean force) {
+    static CliOptions parse(String[] args) {
+        Path source = null;
+        Path output = null;
+        boolean force = false;
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < args.length; i++) {
+            String option = args[i];
+            if (!seen.add(option)) {
+                throw new IllegalArgumentException("Repeated argument " + option + ".");
+            }
+            switch (option) {
+                case "--source" -> source = pathArgument(args, ++i, option);
+                case "--output" -> output = pathArgument(args, ++i, option);
+                case "--force" -> force = true;
+                default -> throw new IllegalArgumentException("Unexpected argument " + option + ".");
+            }
+        }
+        if (source == null || output == null) {
+            throw new IllegalArgumentException("Both --source and --output are required.");
+        }
+        if (output.getFileName() == null
+                || !output.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".drawio")) {
+            throw new IllegalArgumentException("--output must name a .drawio file.");
+        }
+        return new CliOptions(source, output, force);
+    }
+
+    private static Path pathArgument(String[] args, int index, String option) {
+        if (index >= args.length || args[index].isBlank() || args[index].startsWith("--")) {
+            throw new IllegalArgumentException("Missing path after " + option + ".");
+        }
+        return Path.of(args[index]).toAbsolutePath().normalize();
+    }
+}
