@@ -2,6 +2,7 @@ package io.github.lorfersilve.javatodrawio;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.io.UncheckedIOException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,11 +18,13 @@ public final class Main {
               --source <directory>  Java project or source directory to scan recursively
               --output <file>       .drawio destination
               --create-output-dir   Create missing destination directories on successful analysis
+              --overview            Create a package overview and detail pages
+              --classpath <jar>     Resolve library types from a local JAR (repeatable)
               --force               Allow replacing an existing output file
               --help                Show this help
 
             Quote paths containing spaces. Input is UTF-8 Java 17 source.
-            Exit codes: 0 success, 2 invalid arguments or source, 3 analysis failure, 4 output failure.
+            Exit codes: 0 success, 2 invalid arguments, source or classpath, 3 analysis failure, 4 output failure.
             """;
 
     public static void main(String[] args) {
@@ -58,12 +61,21 @@ public final class Main {
             err.println("Source error: " + describe(e));
             return 2;
         }
+
+        JavaClasspath classpath;
+        try {
+            classpath = JavaClasspath.read(options.classpath());
+        } catch (IOException | SecurityException e) {
+            err.println("Classpath error: " + describe(e));
+            return 2;
+        }
+
         JavaAnalyzer.Result result;
         try {
-            result = new JavaAnalyzer().analyze(files);
-        } catch (JavaAnalyzer.AnalysisException e) {
+            result = new JavaAnalyzer(classpath).analyze(files);
+        } catch (JavaAnalyzer.AnalysisException | UncheckedIOException e) {
             err.println("Analysis failed.");
-            err.println(e.getMessage());
+            err.println(e instanceof UncheckedIOException fileError ? describe(fileError.getCause()) : e.getMessage());
             return 3;
         }
         result.warnings().forEach(warning -> err.println("Warning: " + warning));
@@ -71,7 +83,7 @@ public final class Main {
             if (options.createOutputDir()) {
                 Files.createDirectories(options.output().getParent());
             }
-            OutputFile.write(options.output(), result.model(), options.force());
+            OutputFile.write(options.output(), result.model(), options.force(), options.overview());
         } catch (IOException | SecurityException e) {
             err.println("Cannot write " + options.output() + ": " + describe(e));
             return 4;

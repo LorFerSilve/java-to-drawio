@@ -2,6 +2,8 @@ package io.github.lorfersilve.javatodrawio;
 
 import io.github.lorfersilve.javatodrawio.DiagramLayout.Box;
 import io.github.lorfersilve.javatodrawio.DiagramLayout.Grid;
+import io.github.lorfersilve.javatodrawio.DiagramLayout.Point;
+import io.github.lorfersilve.javatodrawio.DiagramLayout.Port;
 import io.github.lorfersilve.javatodrawio.DiagramLayout.Route;
 import io.github.lorfersilve.javatodrawio.DiagramLayout.Size;
 import io.github.lorfersilve.javatodrawio.UmlModel.Modifier;
@@ -25,12 +27,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 final class DrawioWriter {
     private static final int MAX_COLUMNS = 90;
     private static final int LINE_HEIGHT = 18;
+    private static final int PACKAGE_PADDING = 44;
     private static final String FONT = "fontSize=12;fontFamily=monospace;";
     private static final String COMPARTMENT_STYLE = "text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;"
             + "spacing=0;spacingTop=4;spacingLeft=10;spacingRight=10;fillColor=none;strokeColor=none;rotatable=0;" + FONT;
@@ -46,6 +50,10 @@ final class DrawioWriter {
         int height() {
             return Math.max(1, lines.size()) * LINE_HEIGHT + 8;
         }
+
+        int width(int minimum) {
+            return Math.max(minimum, lines.stream().mapToInt(String::length).max().orElse(0) * 8 + 28);
+        }
     }
 
     private record ClassLabels(Caption header, Caption fields, Caption methods) {
@@ -57,29 +65,38 @@ final class DrawioWriter {
         }
     }
 
-    void write(UmlModel model, OutputStream output) throws IOException {
+    private record PackageLayout(Caption caption, Grid grid) {
+        Size size() {
+            int right = grid.boxes().values().stream().mapToInt(box -> box.x() + box.size().width()).max().orElseThrow();
+            int bottom = grid.boxes().values().stream().mapToInt(box -> box.y() + box.size().height()).max().orElseThrow();
+            return new Size(caption.width(right + PACKAGE_PADDING), caption.height() + bottom + PACKAGE_PADDING);
+        }
+    }
+
+    private record PackageTerminal(Box frame, PackageLayout layout, String type) {
+        Point bend(double port, int offset) {
+            Box box = layout.grid().boxes().get(type);
+            int x = frame.x() + box.x() + (int) Math.round(box.size().width() * port);
+            int y = frame.y() + layout.caption().height() + layout.grid().aboveRow(box.row(), offset);
+            return new Point(x, y);
+        }
+    }
+
+    @FunctionalInterface
+    private interface EdgeRouter {
+        Route route(Relationship edge, int lane, int totalLanes);
+    }
+
+    void write(UmlModel model, OutputStream output, boolean overview) throws IOException {
         try {
             Document document = DocumentBuilderFactory.newDefaultInstance().newDocumentBuilder().newDocument();
             Element file = document.createElement("mxfile");
             file.setAttribute("compressed", "false");
             document.appendChild(file);
-            Element page = element(file, "diagram", "id", "uml", "name", "UML Class Diagram");
-            Element graph = element(page, "mxGraphModel", "grid", "1", "gridSize", "10", "page", "0");
-            Element root = element(graph, "root");
-            element(root, "mxCell", "id", "0");
-            element(root, "mxCell", "id", "1", "parent", "0");
-
-            Map<String, ClassLabels> labels = new HashMap<>();
-            Map<String, Size> sizes = new HashMap<>();
-            for (UmlType type : model.types()) {
-                ClassLabels boxLabels = labelsFor(type);
-                labels.put(type.qualifiedName(), boxLabels);
-                sizes.put(type.qualifiedName(), boxLabels.size());
-            }
-            Grid grid = DiagramLayout.place(sizes, model.relationships());
-            writeEdges(root, model.relationships(), grid);
-            for (UmlType type : model.types()) {
-                drawType(root, type, labels.get(type.qualifiedName()), grid.boxes().get(type.qualifiedName()));
+            if (overview) {
+                writeOverview(file, model);
+            } else {
+                writeDetail(file, "uml", "UML Class Diagram", model);
             }
 
             var serializer = TransformerFactory.newDefaultInstance().newTransformer();
@@ -89,6 +106,132 @@ final class DrawioWriter {
         } catch (ParserConfigurationException | TransformerException e) {
             throw new IOException("Cannot write Draw.io XML: " + e.getMessage(), e);
         }
+    }
+
+    private static void writeDetail(Element file, String id, String name, UmlModel model) {
+        Element root = createPage(file, id, name);
+        Map<String, ClassLabels> labels = new HashMap<>();
+        Map<String, Size> sizes = new HashMap<>();
+        for (UmlType type : model.types()) {
+            ClassLabels boxLabels = labelsFor(type);
+            labels.put(type.qualifiedName(), boxLabels);
+            sizes.put(type.qualifiedName(), boxLabels.size());
+        }
+        Grid grid = DiagramLayout.place(sizes, model.relationships());
+        writeEdges(root, model.relationships(), grid::route);
+        for (UmlType type : model.types()) {
+            drawType(root, type, labels.get(type.qualifiedName()), grid.boxes().get(type.qualifiedName()));
+        }
+    }
+
+    private static void writeOverview(Element file, UmlModel model) {
+        Element root = createPage(file, "overview", "Overview");
+        Map<String, List<UmlType>> packages = model.types().stream()
+                .collect(Collectors.groupingBy(UmlType::packageName, TreeMap::new, Collectors.toList()));
+        Map<String, String> packageByType = new HashMap<>();
+        model.types().forEach(type -> packageByType.put(type.qualifiedName(), type.packageName()));
+
+        Map<String, List<Relationship>> internalEdges = new HashMap<>();
+        List<Relationship> packageLinks = new ArrayList<>();
+        for (Relationship edge : model.relationships()) {
+            String source = packageByType.get(edge.source());
+            String target = packageByType.get(edge.target());
+            if (source.equals(target)) {
+                internalEdges.computeIfAbsent(source, key -> new ArrayList<>()).add(edge);
+            } else {
+                packageLinks.add(new Relationship(source, target, edge.kind()));
+            }
+        }
+
+        Map<String, Caption> headers = new HashMap<>();
+        Map<String, PackageLayout> layouts = new HashMap<>();
+        Map<String, Size> groupSizes = new HashMap<>();
+        packages.forEach((name, types) -> {
+            Map<String, Size> sizes = new HashMap<>();
+            for (UmlType type : types) {
+                Caption header = headerFor(type, true);
+                headers.put(type.qualifiedName(), header);
+                sizes.put(type.qualifiedName(), new Size(header.width(152), Math.max(40, header.height())));
+            }
+            LabelBuilder caption = new LabelBuilder();
+            caption.add(displayPackage(name), true, false, false);
+            PackageLayout layout = new PackageLayout(caption.caption(),
+                    DiagramLayout.placeCompact(sizes, internalEdges.getOrDefault(name, List.of())));
+            layouts.put(name, layout);
+            groupSizes.put(name, layout.size());
+        });
+
+        Grid groups = DiagramLayout.place(groupSizes, packageLinks);
+        writeEdges(root, model.relationships(), (edge, lane, totalLanes) -> {
+            String source = packageByType.get(edge.source());
+            String target = packageByType.get(edge.target());
+            Box from = groups.boxes().get(source);
+            if (source.equals(target)) {
+                PackageLayout layout = layouts.get(source);
+                return layout.grid().route(edge, lane, totalLanes).offset(from.x(), from.y() + layout.caption().height());
+            }
+            return betweenPackages(groups, new PackageTerminal(from, layouts.get(source), edge.source()),
+                    new PackageTerminal(groups.boxes().get(target), layouts.get(target), edge.target()),
+                    lane, totalLanes, DiagramLayout.laneOffset(edge));
+        });
+        packages.forEach((name, types) -> {
+            String id = "package:" + name;
+            drawPackage(root, id, layouts.get(name), groups.boxes().get(name), types, headers);
+            writeDetail(file, id, displayPackage(name), new UmlModel(types, internalEdges.getOrDefault(name, List.of())));
+        });
+    }
+
+    private static Route betweenPackages(Grid groups, PackageTerminal source, PackageTerminal target,
+                                         int lane, int totalLanes, int offset) {
+        double position = (lane + 1.0) / (totalLanes + 1.0);
+        Port top = new Port(position, 0);
+        Point from = source.bend(position, offset);
+        Point to = target.bend(position, offset);
+        int fromCorridor = groups.leftOf(source.frame(), offset);
+        int toCorridor = groups.leftOf(target.frame(), offset);
+        List<Point> points = new ArrayList<>();
+        points.add(from);
+        points.add(new Point(fromCorridor, from.y()));
+        // Cross package columns in the gap above a row, then enter the target through its own row gap.
+        if (fromCorridor != toCorridor) {
+            int abovePackages = groups.aboveRow(source.frame().row(), offset);
+            points.add(new Point(fromCorridor, abovePackages));
+            points.add(new Point(toCorridor, abovePackages));
+        }
+        points.add(new Point(toCorridor, to.y()));
+        points.add(to);
+        return new Route(top, top, points);
+    }
+
+    private static void drawPackage(Element root, String id, PackageLayout layout, Box group,
+                                    List<UmlType> types, Map<String, Caption> headers) {
+        int headerHeight = layout.caption().height();
+        String style = "swimlane;html=1;whiteSpace=wrap;horizontal=1;collapsible=0;container=1;dropTarget=0;"
+                + "align=center;verticalAlign=middle;fillColor=#e2e8f0;strokeColor=#94a3b8;swimlaneFillColor=none;"
+                + "startSize=" + headerHeight + ";" + FONT;
+        Element frame = vertex(root, id, "1", layout.caption().html(), style);
+        frame.setAttribute("connectable", "0");
+        geometry(frame, group.x(), group.y(), group.size().width(), group.size().height());
+        for (UmlType type : types) {
+            String qualifiedName = type.qualifiedName();
+            Box box = layout.grid().boxes().get(qualifiedName);
+            Element cell = vertex(root, "type:" + qualifiedName, id, headers.get(qualifiedName).html(),
+                    "rounded=0;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;" + FONT + colors(type));
+            geometry(cell, box.x(), box.y() + headerHeight, box.size().width(), box.size().height());
+        }
+    }
+
+    private static String displayPackage(String name) {
+        return name.isEmpty() ? "(default package)" : name;
+    }
+
+    private static Element createPage(Element file, String id, String name) {
+        Element page = element(file, "diagram", "id", id, "name", name);
+        Element graph = element(page, "mxGraphModel", "grid", "1", "gridSize", "10", "page", "0");
+        Element root = element(graph, "root");
+        element(root, "mxCell", "id", "0");
+        element(root, "mxCell", "id", "1", "parent", "0");
+        return root;
     }
 
     private static void drawType(Element root, UmlType type, ClassLabels labels, Box box) {
@@ -118,7 +261,7 @@ final class DrawioWriter {
         geometry(cell, 0, y, width, caption.height());
     }
 
-    private static void writeEdges(Element root, List<Relationship> relationships, Grid grid) {
+    private static void writeEdges(Element root, List<Relationship> relationships, EdgeRouter router) {
         Map<Pair, Integer> totals = new HashMap<>();
         for (Relationship edge : relationships) {
             totals.merge(Pair.of(edge), 1, Integer::sum);
@@ -126,7 +269,7 @@ final class DrawioWriter {
         Map<Pair, Integer> used = new HashMap<>();
         for (Relationship edge : relationships) {
             Pair pair = Pair.of(edge);
-            Route route = grid.route(edge, used.merge(pair, 1, Integer::sum) - 1, totals.get(pair));
+            Route route = router.route(edge, used.merge(pair, 1, Integer::sum) - 1, totals.get(pair));
             String id = "edge:" + edge.source() + ">" + edge.target() + ":"
                     + edge.kind().name().toLowerCase(Locale.ROOT);
             String style = "edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;"
@@ -155,6 +298,16 @@ final class DrawioWriter {
     }
 
     private static ClassLabels labelsFor(UmlType type) {
+        LabelBuilder fields = new LabelBuilder();
+        type.fields().forEach(field -> fields.add(field.visibility().marker() + " " + field.name() + ": " + field.type(),
+                false, false, field.isStatic()));
+        LabelBuilder methods = new LabelBuilder();
+        type.operations().forEach(operation -> methods.add(signature(operation), false,
+                operation.modifiers().contains(Modifier.ABSTRACT), operation.modifiers().contains(Modifier.STATIC)));
+        return new ClassLabels(headerFor(type, false), fields.caption(), methods.caption());
+    }
+
+    private static Caption headerFor(UmlType type, boolean compact) {
         LabelBuilder header = new LabelBuilder();
         String stereotype = switch (type.kind()) {
             case CLASS -> "";
@@ -166,7 +319,10 @@ final class DrawioWriter {
         if (!stereotype.isEmpty()) {
             header.add(stereotype, false, false, false);
         }
-        String name = type.visibility().marker() + " " + type.displayName() + typeParameters(type.typeParameters());
+        String name = type.visibility().marker() + " " + type.displayName();
+        if (!compact) {
+            name += typeParameters(type.typeParameters());
+        }
         if (type.modifiers().contains(Modifier.SEALED)) {
             name += " {sealed}";
         } else if (type.modifiers().contains(Modifier.NON_SEALED)) {
@@ -174,16 +330,10 @@ final class DrawioWriter {
         }
         header.add(name, true, type.modifiers().contains(Modifier.ABSTRACT),
                 type.modifiers().contains(Modifier.STATIC));
-        if (!type.packageName().isEmpty()) {
+        if (!compact && !type.packageName().isEmpty()) {
             header.add(type.packageName(), false, false, false);
         }
-        LabelBuilder fields = new LabelBuilder();
-        type.fields().forEach(field -> fields.add(field.visibility().marker() + " " + field.name() + ": " + field.type(),
-                false, false, field.isStatic()));
-        LabelBuilder methods = new LabelBuilder();
-        type.operations().forEach(operation -> methods.add(signature(operation), false,
-                operation.modifiers().contains(Modifier.ABSTRACT), operation.modifiers().contains(Modifier.STATIC)));
-        return new ClassLabels(header.caption(), fields.caption(), methods.caption());
+        return header.caption();
     }
 
     private static String signature(Operation operation) {

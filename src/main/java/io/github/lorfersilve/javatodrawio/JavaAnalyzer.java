@@ -44,6 +44,16 @@ import java.util.Set;
 import java.util.TreeMap;
 
 final class JavaAnalyzer {
+    private final JavaClasspath classpath;
+
+    JavaAnalyzer() {
+        this(JavaClasspath.empty());
+    }
+
+    JavaAnalyzer(JavaClasspath classpath) {
+        this.classpath = classpath;
+    }
+
     record Result(UmlModel model, int fileCount, List<String> warnings) {
     }
 
@@ -80,7 +90,7 @@ final class JavaAnalyzer {
         List<UmlType> types = sourceTypes.entrySet().stream()
                 .map(entry -> describe(entry.getKey(), entry.getValue()))
                 .toList();
-        var relations = new RelationshipAnalyzer(sourceTypes).analyze();
+        var relations = new RelationshipAnalyzer(sourceTypes, classpath).analyze();
         List<String> warnings = types.isEmpty()
                 ? List.of("No top-level or member types declared in the Java source files.")
                 : relations.warnings();

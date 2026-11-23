@@ -24,7 +24,7 @@ class DrawioWriterTest {
     @Test
     void rendersEmptyModelAsAnEditablePage() throws Exception {
         ByteArrayOutputStream xml = new ByteArrayOutputStream();
-        new DrawioWriter().write(new UmlModel(List.of(), List.of()), xml);
+        new DrawioWriter().write(new UmlModel(List.of(), List.of()), xml, false);
         DrawioDocument diagram = DrawioDocument.read(new ByteArrayInputStream(xml.toByteArray()));
         assertEquals(2, diagram.cells().size());
         assertTrue(diagram.classes().isEmpty());
@@ -38,7 +38,7 @@ class DrawioWriterTest {
         Callable<Boolean> write = () -> {
             start.await();
             try {
-                OutputFile.write(destination, new UmlModel(List.of(), List.of()), false);
+                OutputFile.write(destination, new UmlModel(List.of(), List.of()), false, false);
                 return true;
             } catch (FileAlreadyExistsException e) {
                 return false;

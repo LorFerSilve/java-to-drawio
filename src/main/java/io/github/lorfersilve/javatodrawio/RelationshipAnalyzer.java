@@ -46,9 +46,9 @@ final class RelationshipAnalyzer {
     private final Map<Pair, EnumSet<RelationshipKind>> edges = new HashMap<>();
     private final Set<String> warnings = new LinkedHashSet<>();
 
-    RelationshipAnalyzer(Map<String, SourceType> sources) {
+    RelationshipAnalyzer(Map<String, SourceType> sources, JavaClasspath classpath) {
         this.sources = sources;
-        this.resolver = new JavaTypeResolver(sources);
+        this.resolver = new JavaTypeResolver(sources, classpath);
     }
 
     Result analyze() {

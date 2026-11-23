@@ -39,11 +39,11 @@ final class OutputFile {
         }
     }
 
-    static void write(Path target, UmlModel model, boolean force) throws IOException {
+    static void write(Path target, UmlModel model, boolean force, boolean overview) throws IOException {
         Path temporary = Files.createTempFile(target.getParent(), ".java-to-drawio-", ".tmp");
         try {
             try (OutputStream output = Files.newOutputStream(temporary)) {
-                new DrawioWriter().write(model, output);
+                new DrawioWriter().write(model, output, overview);
             }
             if (force) {
                 replace(temporary, target);

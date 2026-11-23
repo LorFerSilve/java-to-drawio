@@ -13,9 +13,11 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 final class DiagramLayout {
-    private static final int MARGIN = 80;
-    private static final int COLUMN_GAP = 120;
-    private static final int ROW_GAP = 108;
+    private static final Spacing STANDARD = new Spacing(80, 120, 108);
+    private static final Spacing COMPACT = new Spacing(54, 72, 62);
+
+    private record Spacing(int margin, int columnGap, int rowGap) {
+    }
 
     record Size(int width, int height) {
     }
@@ -30,14 +32,30 @@ final class DiagramLayout {
     }
 
     record Route(Port exit, Port entry, List<Point> points) {
+        Route offset(int x, int y) {
+            return new Route(exit, entry, points.stream().map(point -> new Point(point.x() + x, point.y() + y)).toList());
+        }
     }
 
-    record Grid(Map<String, Box> boxes, int[] rowTops) {
+    record Grid(Map<String, Box> boxes, int[] rowTops, Spacing spacing) {
+        int aboveRow(int row, int offset) {
+            return rowTops[row] - spacing.rowGap() / 2 + offset;
+        }
+
+        int leftOf(Box box, int offset) {
+            return box.x() - spacing.columnGap() / 2 + offset;
+        }
+
         Route route(Relationship edge, int lane, int totalLanes) {
             Box source = boxes.get(edge.source());
             Box target = boxes.get(edge.target());
             if (source == target) {
-                return new Route(new Port(1, 0.28), new Port(1, 0.72), List.of());
+                Port exit = new Port(1, 0.28);
+                Port entry = new Port(1, 0.72);
+                int x = source.x() + source.size().width() + 28;
+                return new Route(exit, entry, List.of(
+                        new Point(x, source.y() + (int) Math.round(exit.y() * source.size().height())),
+                        new Point(x, source.y() + (int) Math.round(entry.y() * source.size().height()))));
             }
             double position = (lane + 1.0) / (totalLanes + 1.0);
             if (source.row() == target.row() && Math.abs(source.column() - target.column()) == 1) {
@@ -49,16 +67,15 @@ final class DiagramLayout {
             Port exit = new Port(position, down ? 1 : 0);
             Port entry = new Port(position, !sameRow && !down ? 1 : 0);
 
-            int hash = 31 * (31 * edge.source().hashCode() + edge.target().hashCode()) + edge.kind().ordinal();
-            int offset = Math.floorMod(hash, 7) * 6 - 18;
-            int sourceLane = rowTops[source.row() + (down ? 1 : 0)] - ROW_GAP / 2 + offset;
-            int targetLane = rowTops[target.row() + (!sameRow && !down ? 1 : 0)] - ROW_GAP / 2 + offset;
+            int offset = laneOffset(edge);
+            int sourceLane = aboveRow(source.row() + (down ? 1 : 0), offset);
+            int targetLane = aboveRow(target.row() + (!sameRow && !down ? 1 : 0), offset);
             int sourceX = source.x() + (int) Math.round(position * source.size().width());
             int targetX = target.x() + (int) Math.round(position * target.size().width());
             List<Point> points = new ArrayList<>();
             points.add(new Point(sourceX, sourceLane));
             if (sourceLane != targetLane) {
-                int columnLane = source.x() - COLUMN_GAP / 2 + offset;
+                int columnLane = leftOf(source, offset);
                 points.add(new Point(columnLane, sourceLane));
                 points.add(new Point(columnLane, targetLane));
             }
@@ -69,9 +86,22 @@ final class DiagramLayout {
         }
     }
 
+    static int laneOffset(Relationship edge) {
+        int hash = 31 * (31 * edge.source().hashCode() + edge.target().hashCode()) + edge.kind().ordinal();
+        return Math.floorMod(hash, 7) * 6 - 18;
+    }
+
     static Grid place(Map<String, Size> sizes, List<Relationship> edges) {
+        return place(sizes, edges, STANDARD);
+    }
+
+    static Grid placeCompact(Map<String, Size> sizes, List<Relationship> edges) {
+        return place(sizes, edges, COMPACT);
+    }
+
+    private static Grid place(Map<String, Size> sizes, List<Relationship> edges, Spacing spacing) {
         if (sizes.isEmpty()) {
-            return new Grid(Map.of(), new int[0]);
+            return new Grid(Map.of(), new int[0], spacing);
         }
         List<String> order = connectedOrder(sizes.keySet(), edges);
         int columns = Math.min(8, (int) Math.ceil(Math.sqrt(order.size())));
@@ -85,8 +115,8 @@ final class DiagramLayout {
             columnWidths[column] = Math.max(columnWidths[column], size.width());
             rowHeights[row] = Math.max(rowHeights[row], size.height());
         }
-        int[] columnStarts = starts(columnWidths, COLUMN_GAP);
-        int[] rowTops = starts(rowHeights, ROW_GAP);
+        int[] columnStarts = starts(columnWidths, spacing.margin(), spacing.columnGap());
+        int[] rowTops = starts(rowHeights, spacing.margin(), spacing.rowGap());
         Map<String, Box> boxes = new HashMap<>();
         for (int i = 0; i < order.size(); i++) {
             String id = order.get(i);
@@ -94,12 +124,12 @@ final class DiagramLayout {
             int row = i / columns;
             boxes.put(id, new Box(row, column, columnStarts[column], rowTops[row], sizes.get(id)));
         }
-        return new Grid(boxes, rowTops);
+        return new Grid(boxes, rowTops, spacing);
     }
 
-    private static int[] starts(int[] sizes, int gap) {
+    private static int[] starts(int[] sizes, int margin, int gap) {
         int[] starts = new int[sizes.length];
-        int next = MARGIN;
+        int next = margin;
         for (int i = 0; i < starts.length; i++) {
             starts[i] = next;
             next += sizes[i] + gap;

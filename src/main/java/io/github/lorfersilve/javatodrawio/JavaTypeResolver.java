@@ -14,6 +14,7 @@ import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclar
 import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ClassLoaderTypeSolver;
 import io.github.lorfersilve.javatodrawio.JavaAnalyzer.SourceType;
+import io.github.lorfersilve.javatodrawio.JavaClasspath.ClassInfo;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -56,6 +57,7 @@ final class JavaTypeResolver {
     }
 
     private final Map<String, SourceType> sources;
+    private final JavaClasspath classpath;
     // The platform loader sees JDK classes, without loading project binaries.
     private final ClassLoaderTypeSolver platform = new ClassLoaderTypeSolver(ClassLoader.getPlatformClassLoader());
     private final Map<String, Optional<ResolvedReferenceTypeDeclaration>> platformTypes = new HashMap<>();
@@ -64,8 +66,9 @@ final class JavaTypeResolver {
     private final Map<MemberQuery, Resolution> members = new HashMap<>();
     private final Set<MemberQuery> resolvingMembers = new HashSet<>();
 
-    JavaTypeResolver(Map<String, SourceType> sources) {
+    JavaTypeResolver(Map<String, SourceType> sources, JavaClasspath classpath) {
         this.sources = sources;
+        this.classpath = classpath;
     }
 
     Resolution resolve(ClassOrInterfaceType reference, SourceType source) {
@@ -238,12 +241,25 @@ final class JavaTypeResolver {
                     .filter(result -> result.status() == Status.FOUND)
                     .map(Resolution::qualifiedName).toList();
         }
-        return platformType(owner).map(type -> type.getAncestors(true).stream()
-                .map(ResolvedReferenceType::getQualifiedName).toList()).orElseGet(List::of);
+        var platformDeclaration = platformType(owner);
+        if (platformDeclaration.isPresent()) {
+            return platformDeclaration.get().getAncestors(true).stream()
+                    .map(ResolvedReferenceType::getQualifiedName).toList();
+        }
+        return classpath.find(owner).map(type -> type.binaryParents().stream().map(this::canonicalParent)
+                .flatMap(Optional::stream).toList()).orElseGet(List::of);
+    }
+
+    private Optional<String> canonicalParent(String binaryName) {
+        if (sources.containsKey(binaryName)) {
+            return Optional.of(binaryName);
+        }
+        return platformType(binaryName).map(ResolvedReferenceTypeDeclaration::getQualifiedName)
+                .or(() -> classpath.findBinary(binaryName).map(ClassInfo::qualifiedName));
     }
 
     private boolean declared(String name) {
-        return sources.containsKey(name) || platformType(name).isPresent();
+        return sources.containsKey(name) || platformType(name).isPresent() || classpath.find(name).isPresent();
     }
 
     private Optional<ResolvedReferenceTypeDeclaration> platformType(String name) {
@@ -276,7 +292,8 @@ final class JavaTypeResolver {
     private AccessSpecifier access(String name) {
         SourceType type = sources.get(name);
         if (type == null) {
-            return platformType(name).map(JavaTypeResolver::platformAccess).orElse(AccessSpecifier.NONE);
+            return platformType(name).map(JavaTypeResolver::platformAccess)
+                    .or(() -> classpath.find(name).map(ClassInfo::access)).orElse(AccessSpecifier.NONE);
         }
         AccessSpecifier explicit = type.declaration().getAccessSpecifier();
         if (explicit == AccessSpecifier.NONE && type.declaration().getParentNode().orElse(null)
@@ -293,8 +310,8 @@ final class JavaTypeResolver {
     private boolean staticMember(String name) {
         SourceType type = sources.get(name);
         if (type == null) {
-            // These are already known platform member types. They cannot create project edges.
-            return true;
+            // Preserve platform resolution and check static membership explicitly for supplied JARs.
+            return platformType(name).isPresent() || classpath.find(name).map(ClassInfo::staticMember).orElse(false);
         }
         TypeDeclaration<?> declaration = type.declaration();
         return declaration.getParentNode().orElse(null) instanceof TypeDeclaration<?> enclosing
@@ -305,7 +322,8 @@ final class JavaTypeResolver {
     private String packageOf(String name) {
         SourceType type = sources.get(name);
         return type != null ? type.packageName()
-                : platformType(name).map(ResolvedReferenceTypeDeclaration::getPackageName).orElse("");
+                : platformType(name).map(ResolvedReferenceTypeDeclaration::getPackageName)
+                .or(() -> classpath.find(name).map(ClassInfo::packageName)).orElse("");
     }
 
     static List<ClassOrInterfaceType> extendedTypes(TypeDeclaration<?> type) {

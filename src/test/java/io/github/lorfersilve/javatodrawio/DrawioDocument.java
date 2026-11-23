@@ -8,6 +8,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-record DrawioDocument(Map<String, Element> cells) {
+record DrawioDocument(String name, Map<String, Element> cells) {
     static DrawioDocument read(Path file) throws Exception {
         try (InputStream input = Files.newInputStream(file)) {
             return read(input);
@@ -26,13 +27,34 @@ record DrawioDocument(Map<String, Element> cells) {
     }
 
     static DrawioDocument read(InputStream input) throws Exception {
+        List<DrawioDocument> pages = readPages(input);
+        assertEquals(1, pages.size());
+        return pages.get(0);
+    }
+
+    static List<DrawioDocument> readPages(Path path) throws Exception {
+        try (InputStream input = Files.newInputStream(path)) {
+            return readPages(input);
+        }
+    }
+
+    private static List<DrawioDocument> readPages(InputStream input) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newDefaultInstance();
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
         Element file = factory.newDocumentBuilder().parse(input).getDocumentElement();
         assertEquals("mxfile", file.getTagName());
         assertEquals("false", file.getAttribute("compressed"));
-        Element diagram = onlyChild(file, "diagram");
+        var ids = new HashSet<String>();
+        return elements(file.getChildNodes()).stream().map(diagram -> {
+            assertEquals("diagram", diagram.getTagName());
+            String id = diagram.getAttribute("id");
+            assertTrue(!id.isBlank() && ids.add(id), "Missing or duplicate page ID " + id);
+            return readPage(diagram);
+        }).toList();
+    }
+
+    private static DrawioDocument readPage(Element diagram) {
         Element graph = onlyChild(diagram, "mxGraphModel");
         Element root = onlyChild(graph, "root");
         Map<String, Element> cells = new LinkedHashMap<>();
@@ -44,7 +66,7 @@ record DrawioDocument(Map<String, Element> cells) {
         assertNotNull(cells.get("0"), "Missing graph root");
         assertNotNull(cells.get("1"), "Missing layer");
         assertEquals("0", cells.get("1").getAttribute("parent"));
-        var document = new DrawioDocument(cells);
+        var document = new DrawioDocument(diagram.getAttribute("name"), cells);
         for (Element cell : cells.values()) {
             String parent = cell.getAttribute("parent");
             if (!parent.isEmpty()) {
@@ -59,7 +81,7 @@ record DrawioDocument(Map<String, Element> cells) {
                 Element vertex = cells.get(edge.getAttribute(terminal));
                 assertNotNull(vertex, "Unknown edge " + terminal);
                 assertEquals("1", vertex.getAttribute("vertex"));
-                assertEquals("1", vertex.getAttribute("parent"));
+                assertTrue(vertex.getAttribute("id").startsWith("type:"));
             }
             assertEquals("1", onlyChild(edge, "mxGeometry").getAttribute("relative"));
         }
@@ -74,7 +96,7 @@ record DrawioDocument(Map<String, Element> cells) {
 
     List<Element> classes() {
         return cells.values().stream()
-                .filter(cell -> "1".equals(cell.getAttribute("vertex")) && "1".equals(cell.getAttribute("parent")))
+                .filter(cell -> "1".equals(cell.getAttribute("vertex")) && cell.getAttribute("id").startsWith("type:"))
                 .toList();
     }
 
@@ -88,13 +110,18 @@ record DrawioDocument(Map<String, Element> cells) {
             Element left = shapes.get(i);
             for (int j = i + 1; j < shapes.size(); j++) {
                 Element right = shapes.get(j);
-                boolean overlap = number(left, "x") < number(right, "x") + number(right, "width")
-                        && number(right, "x") < number(left, "x") + number(left, "width")
-                        && number(left, "y") < number(right, "y") + number(right, "height")
-                        && number(right, "y") < number(left, "y") + number(left, "height");
+                boolean overlap = position(left, "x") < position(right, "x") + number(right, "width")
+                        && position(right, "x") < position(left, "x") + number(left, "width")
+                        && position(left, "y") < position(right, "y") + number(right, "height")
+                        && position(right, "y") < position(left, "y") + number(left, "height");
                 assertTrue(!overlap, () -> left.getAttribute("id") + " overlaps " + right.getAttribute("id"));
             }
         }
+    }
+
+    private int position(Element cell, String axis) {
+        String parent = cell.getAttribute("parent");
+        return number(cell, axis) + (parent.startsWith("package:") ? number(cell(parent), axis) : 0);
     }
 
     static int number(Element cell, String attribute) {

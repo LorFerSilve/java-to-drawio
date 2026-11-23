@@ -3,11 +3,16 @@ package io.github.lorfersilve.javatodrawio;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.tools.ToolProvider;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,12 +34,59 @@ class ConverterIT {
     void packagesAnExecutableJarWithHelpAndArgumentValidation() throws Exception {
         Invocation help = run("--help");
         help.assertExit(0);
-        for (String option : List.of("--source", "--output", "--create-output-dir", "--force", "--help")) {
+        for (String option : List.of("--source", "--output", "--create-output-dir", "--overview", "--classpath",
+                "--force", "--help")) {
             assertTrue(help.output().contains(option), help.output());
         }
         Invocation unknown = run("--unknown");
         unknown.assertExit(2);
         assertTrue(unknown.output().contains("Unexpected argument --unknown"));
+    }
+
+    @Test
+    void createsACompactOverviewAndFullDetailPagesGroupedByPackage() throws Exception {
+        Path output = temp.resolve("catalog overview.drawio");
+        Path fixture = fixture();
+        run("--source", fixture.toString(), "--output", output.toString(), "--overview").assertExit(0);
+        var pages = DrawioDocument.readPages(output);
+        assertEquals(List.of("Overview", "sample.audit", "sample.catalog", "sample.service"),
+                pages.stream().map(DrawioDocument::name).toList());
+
+        DrawioDocument overview = pages.get(0);
+        assertEquals(11, overview.classes().size());
+        assertEquals(13, overview.edges().size());
+        assertTrue(overview.cells().keySet().stream().noneMatch(id -> id.startsWith("fields:") || id.startsWith("methods:")));
+        assertEquals("package:sample.catalog", overview.cell("type:sample.catalog.Product").getAttribute("parent"));
+        assertEquals("package:sample.audit", overview.cell("type:sample.audit.Product").getAttribute("parent"));
+        assertEdge(overview, "sample.service.CatalogService", "sample.audit.Product", "dependency",
+                "endArrow=open;endFill=0;dashed=1;");
+        for (DrawioDocument page : pages) {
+            page.assertNoClassOverlap();
+        }
+
+        DrawioDocument catalog = pages.get(2);
+        assertEquals(5, catalog.classes().size());
+        assertEquals(6, catalog.edges().size());
+        assertTrue(catalog.cell("methods:sample.catalog.Product").getAttribute("value").contains("displayName(): String"));
+        assertEquals("1", catalog.cell("type:sample.catalog.Product").getAttribute("parent"));
+        assertTrue(pages.get(3).cell("methods:sample.service.CatalogService").getAttribute("value")
+                .contains("+ export(product: Product): sample.audit.Product"));
+
+        Path repeated = temp.resolve("repeated overview.drawio");
+        run("--source", fixture.toString(), "--output", repeated.toString(), "--overview").assertExit(0);
+        assertEquals(-1L, Files.mismatch(output, repeated));
+    }
+
+    @Test
+    void includesTheUnnamedPackageInOverviewMode() throws Exception {
+        Path source = Files.createDirectory(temp.resolve("plain sources"));
+        Files.writeString(source.resolve("Example.java"), "class Example { int id; }");
+        Path output = temp.resolve("unnamed.drawio");
+        run("--source", source.toString(), "--output", output.toString(), "--overview").assertExit(0);
+        var pages = DrawioDocument.readPages(output);
+        assertEquals(List.of("Overview", "(default package)"), pages.stream().map(DrawioDocument::name).toList());
+        assertEquals("package:", pages.get(0).cell("type:Example").getAttribute("parent"));
+        assertTrue(pages.get(1).cell("fields:Example").getAttribute("value").contains("id: int"));
     }
 
     @Test
@@ -189,6 +241,90 @@ class ConverterIT {
     }
 
     @Test
+    void resolvesLocalLibraryTypesAcrossJarsWithoutAddingThemToTheDiagram() throws Exception {
+        Path base = compileLibrary("base library.jar", null, Map.of(
+                "api/Base.java", """
+                        package api;
+                        public class Base {
+                            static {
+                                if (System.getProperty("java.version") != null) throw new AssertionError();
+                            }
+                            public static class Entry {}
+                            public class Inner {}
+                        }
+                        """,
+                "api/Literal$Type.java", "package api; public class Literal$Type {}"));
+        Path adapter = compileLibrary("adapter library.JAR", base, Map.of(
+                "adapter/Adapter.java", "package adapter; public class Adapter extends api.Base {}"));
+        Path source = Files.createDirectory(temp.resolve("library client"));
+        Files.writeString(source.resolve("Client.java"), """
+                package demo;
+                import adapter.Adapter;
+                import api.Base;
+                import api.Literal$Type;
+                import static adapter.Adapter.Entry;
+                import static api.Base.*;
+                import project.*;
+                class Client extends Adapter {
+                    Entry entry;
+                    Base.Inner inner;
+                    Literal$Type type;
+                    Node process(Node node) { return node; }
+                }
+                class Helper { Inner field; }
+                """);
+        Files.writeString(source.resolve("Node.java"), "package project; public class Node {}");
+        Files.writeString(source.resolve("Inner.java"), "package project; public class Inner {}");
+
+        Invocation withoutClasspath = convert(source, temp.resolve("without classpath.drawio"));
+        withoutClasspath.assertExit(0);
+        assertTrue(withoutClasspath.output().contains("cannot resolve type 'Adapter'"), withoutClasspath.output());
+
+        Path output = temp.resolve("with libraries.drawio");
+        Invocation resolved = run("--source", source.toString(), "--output", output.toString(),
+                "--classpath", adapter.toString(), "--classpath", base.toString());
+        resolved.assertExit(0);
+        assertTrue(resolved.output().contains("4 UML types, 2 relationships, 0 warnings."), resolved.output());
+        DrawioDocument diagram = DrawioDocument.read(output);
+        assertEquals(4, diagram.classes().size());
+        assertEquals(2, diagram.edges().size());
+        assertEdge(diagram, "demo.Client", "project.Node", "dependency", "endArrow=open;endFill=0;dashed=1;");
+        assertEdge(diagram, "demo.Helper", "project.Inner", "association", "endArrow=none;dashed=0;");
+    }
+
+    @Test
+    void rejectsMissingAndInvalidClasspathJarsBeforeCreatingOutput() throws Exception {
+        Path invalid = Files.writeString(temp.resolve("invalid archive.jar"), "plain text");
+        for (Path jar : List.of(temp.resolve("missing.jar"), invalid, temp.toAbsolutePath().getRoot())) {
+            Path output = temp.resolve("uncreated/output.drawio");
+            Invocation error = run("--source", fixture().toString(), "--output", output.toString(),
+                    "--create-output-dir", "--classpath", jar.toString());
+            error.assertExit(2);
+            assertTrue(error.output().contains("Classpath error"), error.output());
+            assertTrue(error.output().contains(jar.toString()), error.output());
+            assertFalse(Files.exists(output.getParent()));
+        }
+    }
+
+    @Test
+    void reportsMalformedClassMetadataInAClasspathJar() throws Exception {
+        Path library = temp.resolve("broken classes.jar");
+        try (var jar = new JarOutputStream(Files.newOutputStream(library))) {
+            jar.putNextEntry(new JarEntry("api/Invalid.class"));
+            jar.write(new byte[] {1, 2, 3});
+            jar.closeEntry();
+        }
+        Path source = Files.createDirectory(temp.resolve("src"));
+        Files.writeString(source.resolve("Client.java"), "class Client { api.Invalid field; }");
+        Path output = temp.resolve("diagram.drawio");
+        Invocation error = run("--source", source.toString(), "--output", output.toString(),
+                "--classpath", library.toString());
+        error.assertExit(3);
+        assertTrue(error.output().contains("Cannot read class api.Invalid from " + library), error.output());
+        assertFalse(Files.exists(output));
+    }
+
+    @Test
     void usesJavaIdentifierEqualityAndWritesXmlForUnusualUnicodeIdentifiers() throws Exception {
         Path source = Files.createDirectory(temp.resolve("unicode project"));
         String supplementary = new String(Character.toChars(0x10400));
@@ -246,6 +382,35 @@ class ConverterIT {
 
     private Path fixture() throws Exception {
         return Path.of(getClass().getResource("/fixtures/Catalog project").toURI());
+    }
+
+    private Path compileLibrary(String name, Path dependency, Map<String, String> sources) throws Exception {
+        Path root = Files.createTempDirectory(temp, "library sources ");
+        Path classes = Files.createDirectory(root.resolve("compiled"));
+        List<String> arguments = new ArrayList<>(List.of("--release", "17", "-d", classes.toString()));
+        if (dependency != null) {
+            arguments.addAll(List.of("-classpath", dependency.toString()));
+        }
+        for (var source : sources.entrySet()) {
+            Path file = root.resolve(source.getKey());
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, source.getValue());
+            arguments.add(file.toString());
+        }
+        var report = new ByteArrayOutputStream();
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, report, report, arguments.toArray(String[]::new)),
+                report::toString);
+
+        Path output = temp.resolve(name);
+        try (var jar = new JarOutputStream(Files.newOutputStream(output)); var files = Files.walk(classes)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                String entry = classes.relativize(file).toString().replace('\\', '/');
+                jar.putNextEntry(new JarEntry(entry));
+                Files.copy(file, jar);
+                jar.closeEntry();
+            }
+        }
+        return output;
     }
 
     private Invocation convert(Path source, Path output) throws Exception {
