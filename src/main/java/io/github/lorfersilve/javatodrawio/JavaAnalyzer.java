@@ -90,12 +90,16 @@ final class JavaAnalyzer {
     private static Optional<CompilationUnit> parse(Path file, JavaParser parser, List<String> errors) {
         try {
             String source = Files.readString(file, StandardCharsets.UTF_8);
-            var result = parser.parse(source.startsWith("\uFEFF") ? source.substring(1) : source);
+            if (source.startsWith("\uFEFF")) {
+                source = source.substring(1);
+            }
+            var result = parser.parse(source);
             if (result.isSuccessful()) {
                 return result.getResult().map(JavaAnalyzer::normalizeIdentifiers);
             }
+            List<String> sourceLines = source.lines().toList();
             for (Problem problem : result.getProblems()) {
-                errors.add(file + ": " + problem.getVerboseMessage());
+                errors.add(ParseDiagnostics.format(file, sourceLines, problem));
             }
             if (result.getProblems().isEmpty()) {
                 errors.add(file + ": JavaParser did not produce a compilation unit.");

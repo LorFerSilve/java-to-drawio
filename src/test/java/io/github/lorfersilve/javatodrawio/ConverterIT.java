@@ -107,7 +107,9 @@ class ConverterIT {
         Invocation error = convert(source, destination);
         error.assertExit(3);
         assertTrue(error.output().contains(broken.getFileName().toString()), error.output());
-        assertTrue(error.output().contains("Parse error"), error.output());
+        assertTrue(error.output().contains("Broken File.java:1:26: Parse error: unexpected"), error.output());
+        assertTrue(error.output().contains("class Broken { void foo( }"), error.output());
+        assertTrue(error.output().contains("^"), error.output());
         assertFalse(Files.exists(destination));
 
         Files.writeString(destination, "preserve me");
@@ -116,6 +118,25 @@ class ConverterIT {
         try (var files = Files.list(temp)) {
             assertFalse(files.anyMatch(path -> path.getFileName().toString().endsWith(".tmp")));
         }
+    }
+
+    @Test
+    void pointsToTheMissingPackageSemicolonAfterLeadingComments() throws Exception {
+        Path source = Files.createDirectory(temp.resolve("domino project"));
+        Files.writeString(source.resolve("DominoBoardView.java"), """
+                /* A leading comment stays valid. */
+                package game.domino
+                /** Shows the board. */
+                public class DominoBoardView {}
+                """);
+        Path output = temp.resolve("diagram.drawio");
+        Invocation error = convert(source, output);
+        error.assertExit(3);
+        assertTrue(error.output().contains("DominoBoardView.java:2:20: Parse error: add ';' after the package name."),
+                error.output());
+        assertTrue(error.output().contains("  package game.domino" + System.lineSeparator() + " ".repeat(21) + "^"),
+                error.output());
+        assertFalse(Files.exists(output));
     }
 
     @Test
