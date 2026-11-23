@@ -106,7 +106,7 @@ final class DrawioWriter {
         int dividerY = fieldStart + labels.fields().height();
         compartment(root, "fields:" + type.qualifiedName(), id, labels.fields(), fieldStart, width);
         Element divider = vertex(root, "divider:" + type.qualifiedName(), id, "",
-                "line;strokeWidth=1;editable=0;movable=0;resizable=0;rotatable=0;" + colors);
+                "line;strokeWidth=1;editable=0;rotatable=0;" + colors);
         divider.setAttribute("connectable", "0");
         geometry(divider, 0, dividerY, width, 1);
         compartment(root, "methods:" + type.qualifiedName(), id, labels.methods(), dividerY + 1, width);

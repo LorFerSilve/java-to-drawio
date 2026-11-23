@@ -151,7 +151,7 @@ class JavaAnalyzerTest {
         write("Fine.java", "class Fine {}");
         Path malformed = write("Broken path/Malformed.java", "class Malformed { void test( }");
         Path unsupported = write("Newer.java", "class Newer { String text = STR.\"test\"; }");
-        Path encoding = Files.write(source.resolve("Encoding.java"), new byte[] {(byte) 0xC3, 0x28});
+        Path encoding = Files.write(source.resolve("Encoding.java"), new byte[] {(byte) 0xC3, 0x28}).toRealPath();
 
         var failure = assertThrows(AnalysisException.class, this::analyze);
         assertTrue(failure.getMessage().contains(malformed.toString()), failure.getMessage());
@@ -165,8 +165,8 @@ class JavaAnalyzerTest {
         Path second = write("module-two/src/main/java/Foo.java", "package same; class Foo {}");
         var failure = assertThrows(AnalysisException.class, this::analyze);
         assertTrue(failure.getMessage().contains("duplicate type same.Foo"), failure.getMessage());
-        assertTrue(failure.getMessage().contains(first.toString()));
-        assertTrue(failure.getMessage().contains(second.toString()));
+        assertTrue(failure.getMessage().contains(first.toString()), failure.getMessage());
+        assertTrue(failure.getMessage().contains(second.toString()), failure.getMessage());
     }
 
     private JavaAnalyzer.Result analyze() throws IOException, AnalysisException {
@@ -176,6 +176,6 @@ class JavaAnalyzerTest {
     private Path write(String name, String text) throws IOException {
         Path path = source.resolve(name);
         Files.createDirectories(path.getParent());
-        return Files.writeString(path, text);
+        return Files.writeString(path, text).toRealPath();
     }
 }
